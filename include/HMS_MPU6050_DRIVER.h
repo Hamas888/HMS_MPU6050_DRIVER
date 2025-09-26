@@ -122,7 +122,7 @@ typedef enum {
   HMS_MPU6050_BAND_21_HZ,                                       // 21 Hz
   HMS_MPU6050_BAND_10_HZ,                                       // 10 Hz
   HMS_MPU6050_BAND_5_HZ,                                        // 5 Hz
-} HMS_MPU6050_BandwidthTypeDef;
+} HMS_MPU6050_Bandwidth;
 
 typedef enum {
   HMS_MPU6050_HIGHPASS_DISABLE,
@@ -141,36 +141,102 @@ typedef enum {
   HMS_MPU6050_CYCLE_40_HZ,                                      // 40 Hz
 } HMS_MPU6050_CycleRate;
 
+typedef struct {
+  float x;
+  float y;
+  float z;
+} HMS_MPU6050_Acceleration;
+
+typedef struct {
+  float x;
+  float y;
+  float z;
+} HMS_MPU6050_Gyroscope;
+
+typedef struct {
+  float                    Temperature;
+  HMS_MPU6050_Gyroscope    Gyro;
+  HMS_MPU6050_Acceleration Accel;
+
+} HMS_MPU6050_SensorData;
+  
 class HMS_MPU6050 {
 public:
-    HMS_MPU6050();
-    ~HMS_MPU6050();
+  HMS_MPU6050();
+  ~HMS_MPU6050();
 
-    #if defined(HMS_MPU6050_PLATFORM_ARDUINO)
-        HMS_MPU6050_StatusTypeDef begin(
-            TwoWire *theWire = &Wire, 
-            uint8_t addr = HMS_MPU6050_DEVICE_ADDR, int32_t sensor_id = 0
-        );
-    #elif defined(HMS_MPU6050_PLATFORM_ESP_IDF)
-        HMS_MPU6050_StatusTypeDef begin(
-            i2c_port_t i2c_port = I2C_NUM_0, 
-            uint8_t addr = HMS_MPU6050_DEVICE_ADDR, int32_t sensor_id = 0
-        );
-    #elif defined(HMS_MPU6050_PLATFORM_ZEPHYR)
-        HMS_MPU6050_StatusTypeDef begin(
-            const struct device *i2c_dev = NULL, 
-            uint8_t addr = HMS_MPU6050_DEVICE_ADDR, int32_t sensor_id = 0
-        );
-    #elif defined(HMS_MPU6050_PLATFORM_STM32_HAL)
-        HMS_MPU6050_StatusTypeDef begin(
-            I2C_HandleTypeDef *hi2c = NULL, 
-            uint8_t addr = HMS_MPU6050_DEVICE_ADDR, int32_t sensor_id = 0
-        );
-    #endif
+  #if defined(HMS_MPU6050_PLATFORM_ARDUINO)
+    HMS_MPU6050_StatusTypeDef begin(
+      TwoWire *theWire = &Wire, uint8_t addr = HMS_MPU6050_DEVICE_ADDR
+    );
+  #elif defined(HMS_MPU6050_PLATFORM_ESP_IDF)
+    HMS_MPU6050_StatusTypeDef begin(
+      i2c_port_t i2c_port = I2C_NUM_0, uint8_t addr = HMS_MPU6050_DEVICE_ADDR
+    );
+  #elif defined(HMS_MPU6050_PLATFORM_ZEPHYR)
+    HMS_MPU6050_StatusTypeDef begin(
+      const struct device *i2c_dev = NULL, uint8_t addr = HMS_MPU6050_DEVICE_ADDR
+    );
+  #elif defined(HMS_MPU6050_PLATFORM_STM32_HAL)
+    HMS_MPU6050_StatusTypeDef begin(
+      I2C_HandleTypeDef *hi2c = NULL, uint8_t addr = HMS_MPU6050_DEVICE_ADDR
+    );
+  #endif
+
+  bool enableSleep(bool enable);
+  bool enableCycle(bool enable);
+  bool setTemperatureStandby(bool enable);
+  bool setGyroStandby(bool xAxisStandby, bool yAxisStandby, bool zAxisStandby);
+  bool setAccelerometerStandby(bool xAxisStandby, bool yAxisStandby, bool zAxisStandby);
+
+  uint8_t getSampleRateDivisor();
+  bool getMotionInterruptStatus();
+  HMS_MPU6050_ClockSelect getClock();
+  HMS_MPU6050_GyroRange getGyroRange();
+  HMS_MPU6050_Bandwidth getFilterBandwidth();
+  HMS_MPU6050_AccelRange getAccelerometerRange();
+  HMS_MPU6050_HighPassFilter getHighPassFilter();
+  void getGyroscope(HMS_MPU6050_Gyroscope* gyro);
+  void getSensorData(HMS_MPU6050_SensorData* sensor);
+  void getAcceleration(HMS_MPU6050_Acceleration* accel);
+
+
+  void setI2CBypass(bool bypass);
+  void setMotionInterrupt(bool active);
+  void setInterruptPinLatch(bool held);
+  void setSampleRateDivisor(uint8_t divisor);
+  void setInterruptPinPolarity(bool activeLow);
+  void setMotionDetectionDuration(uint8_t dur);
+  void setClock(HMS_MPU6050_ClockSelect clock);
+  void setMotionDetectionThreshold(uint8_t thr);
+  void setGyroRange(HMS_MPU6050_GyroRange range);
+  void setFsyncSampleOutput(HMS_MPU6050_FsyncOut fsyncOut);
+  void setFilterBandwidth(HMS_MPU6050_Bandwidth bandwidth);
+  void setAccelerometerRange(HMS_MPU6050_AccelRange range);
+  void setHighPassFilter(HMS_MPU6050_HighPassFilter filter);
+
+  const char* getDeviceName() const   { return HMS_MPU6050_DEVICE_NAME; }
+  uint8_t getDeviceAddress() const    { return deviceAddress;           }
 
 
 private:
-      bool initialized  = false;
+  bool      initialized   = false;
+  float     accX;
+  float     accY;
+  float     accZ;
+  float     gyroX;
+  float     gyroY;
+  float     gyroZ;
+  float     temperature;
+  uint8_t   deviceAddress;
+  uint16_t  rawTemp;
+  uint16_t  rawAccX;
+  uint16_t  rawAccY;
+  uint16_t  rawAccZ;
+  uint16_t  rawGyroX;
+  uint16_t  rawGyroY;
+  uint16_t  rawGyroZ;
+
   #if defined(HMS_MPU6050_PLATFORM_ARDUINO)
     TwoWire *mpu6050_wire = NULL;
   #elif defined(HMS_MPU6050_PLATFORM_ESP_IDF)
@@ -180,4 +246,12 @@ private:
   #elif defined(HMS_MPU6050_PLATFORM_STM32_HAL)
     I2C_HandleTypeDef *mpu6050_hi2c;
   #endif
+
+  
+  void reset();
+  void readSensorData();
+  void mpuDelay(uint32_t ms);
+  HMS_MPU6050_StatusTypeDef init();
+  uint8_t readRegister(uint8_t reg);
+  void writeRegister(uint8_t reg, uint8_t val); 
 };

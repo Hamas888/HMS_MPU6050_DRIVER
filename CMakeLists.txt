@@ -1,6 +1,6 @@
-# HMS_DRV26XX_DRIVER/CMakeLists.txt
+# HMS_MPU6050_DRIVER/CMakeLists.txt
 
-set(HMS_DRV26XX_VERSION 1.0.0)
+set(HMS_MPU6050_DRIVER_VERSION 1.0.0)
 
 # Check if we're building with Zephyr
 if(DEFINED ZEPHYR_BASE)
