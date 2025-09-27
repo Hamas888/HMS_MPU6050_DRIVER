@@ -201,6 +201,7 @@ public:
   void getAcceleration(HMS_MPU6050_Acceleration* accel);
 
 
+  uint8_t readRegister(uint8_t reg);
   void setI2CBypass(bool bypass);
   void setMotionInterrupt(bool active);
   void setInterruptPinLatch(bool held);
@@ -252,6 +253,6 @@ private:
   void readSensorData();
   void mpuDelay(uint32_t ms);
   HMS_MPU6050_StatusTypeDef init();
-  uint8_t readRegister(uint8_t reg);
+  
   void writeRegister(uint8_t reg, uint8_t val); 
 };

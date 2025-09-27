@@ -1,7 +1,7 @@
 #include "HMS_MPU6050_DRIVER.h"
 
 #if defined(HMS_MPU6050_LOGGER_ENABLED)
-    #include "ChronoLog.h"
+  #include "ChronoLog.h"
   ChronoLogger mpuLogger("HMS_MPU6050", CHRONOLOG_LEVEL_DEBUG);
 #endif
 
@@ -15,8 +15,46 @@ HMS_MPU6050::~HMS_MPU6050() {
 
 #if defined(HMS_MPU6050_PLATFORM_ARDUINO)
 HMS_MPU6050_StatusTypeDef HMS_MPU6050::begin(TwoWire *wire, uint8_t addr) {
-    // Arduino-specific initialization code here
-    return HMS_MPU6050_OK;
+  mpu6050_wire = wire;
+  deviceAddress = addr;
+  mpu6050_wire->begin();
+  mpu6050_wire->beginTransmission(deviceAddress);
+  if (mpu6050_wire->endTransmission() != 0) {
+    #ifdef HMS_MPU6050_LOGGER_ENABLED
+      mpuLogger.error("Device not found at address 0x%02X", deviceAddress);
+    #endif
+    return HMS_MPU6050_NOT_FOUND;                                                         // Device not found
+ }
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.info("Device found at address 0x%02X", deviceAddress);
+  #endif
+  return init();
+}
+
+uint8_t HMS_MPU6050::readRegister(uint8_t registerAddr) {
+  mpu6050_wire->beginTransmission(deviceAddress);
+  mpu6050_wire->write(registerAddr);
+  mpu6050_wire->endTransmission(false);                                                    // Send repeated start
+  mpu6050_wire->requestFrom(deviceAddress, (uint8_t)1);
+  if (mpu6050_wire->available()) {
+      return mpu6050_wire->read();
+  }
+  return 0;                                                                               // Return 0 if no data available
+}
+
+void HMS_MPU6050::writeRegister(uint8_t registerAddr, uint8_t value) {
+  mpu6050_wire->beginTransmission(deviceAddress);
+  mpu6050_wire->write(registerAddr);
+  mpu6050_wire->write(value);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+  uint8_t result = mpu6050_wire->endTransmission();
+    if (result != 0) {
+      mpuLogger.error("I2C write failed with error code: %d", result);
+    }
+  #else
+    mpu6050_wire->endTransmission();
+  #endif
 }
 
 #elif defined(HMS_MPU6050_PLATFORM_ESP_IDF)
@@ -109,74 +147,220 @@ void HMS_MPU6050::reset() {
 
 void HMS_MPU6050::setInterruptPinLatch(bool held) {
   uint8_t intPinConfigValue = readRegister(HMS_MPU6050_INT_PIN_CONFIG);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("INT_PIN_CONFIG before: 0x%02X", intPinConfigValue);
+  #endif
+  
   if (held) {
     intPinConfigValue |= 0x20;                                                               // Set bit 5 for latch until cleared
   } else {
     intPinConfigValue &= ~0x20;                                                              // Clear bit 5 for 50us pulse
   }
   writeRegister(HMS_MPU6050_INT_PIN_CONFIG, intPinConfigValue);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_INT_PIN_CONFIG);
+    mpuLogger.debug("INT_PIN_CONFIG after: 0x%02X (expected: 0x%02X)", verifyValue, intPinConfigValue);
+    if (verifyValue != intPinConfigValue) {
+      mpuLogger.error("Interrupt pin latch write failed!");
+    }
+  #endif
 }
 
 void HMS_MPU6050::setSampleRateDivisor(uint8_t divisor) {
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t beforeValue = readRegister(HMS_MPU6050_SMPLRT_DIV);
+    mpuLogger.debug("SMPLRT_DIV before: 0x%02X", beforeValue);
+  #endif
+  
   writeRegister(HMS_MPU6050_SMPLRT_DIV, divisor);
+  
+  // Verify the write
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_SMPLRT_DIV);
+    mpuLogger.debug("SMPLRT_DIV after: 0x%02X (expected: 0x%02X)", verifyValue, divisor);
+    if (verifyValue != divisor) {
+      mpuLogger.error("Sample rate divisor write failed!");
+    }
+  #endif
 }
 
 void HMS_MPU6050::setFilterBandwidth(HMS_MPU6050_Bandwidth bandwidth) {
   uint8_t configValue = readRegister(HMS_MPU6050_CONFIG);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("CONFIG before: 0x%02X", configValue);
+  #endif
+  
   configValue = (configValue & 0xF8) | (bandwidth & 0x07);                                  // Clear bits 0-2, set new bandwidth
   writeRegister(HMS_MPU6050_CONFIG, configValue);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_CONFIG);
+    mpuLogger.debug("CONFIG after: 0x%02X (expected: 0x%02X)", verifyValue, configValue);
+    if (verifyValue != configValue) {
+      mpuLogger.error("Filter bandwidth write failed!");
+    }
+  #endif
 }
 
 void HMS_MPU6050::setInterruptPinPolarity(bool activeLow) {
   uint8_t intPinConfigValue = readRegister(HMS_MPU6050_INT_PIN_CONFIG);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("INT_PIN_CONFIG before: 0x%02X", intPinConfigValue);
+  #endif
+  
   if (activeLow) {
-    intPinConfigValue |= 0x02;                                                               // Set bit 1 for active low
+    intPinConfigValue |= 0x80;                                                               // Set bit 7 for active low
   } else {
-    intPinConfigValue &= ~0x02;                                                              // Clear bit 1 for active high
+    intPinConfigValue &= ~0x80;                                                              // Clear bit 7 for active high
   }
   writeRegister(HMS_MPU6050_INT_PIN_CONFIG, intPinConfigValue);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_INT_PIN_CONFIG);
+    mpuLogger.debug("INT_PIN_CONFIG after: 0x%02X (expected: 0x%02X)", verifyValue, intPinConfigValue);
+    if (verifyValue != intPinConfigValue) {
+      mpuLogger.error("Interrupt pin polarity write failed!");
+    }
+  #endif
 }
 
 void HMS_MPU6050::setGyroRange(HMS_MPU6050_GyroRange range) {
   uint8_t gyroConfigValue = readRegister(HMS_MPU6050_GYRO_CONFIG);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("GYRO_CONFIG before: 0x%02X", gyroConfigValue);
+  #endif
+  
   gyroConfigValue = (gyroConfigValue & 0xE7) | ((range & 0x03) << 3);                       // Clear bits 3-4, set new range
   writeRegister(HMS_MPU6050_GYRO_CONFIG, gyroConfigValue);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_GYRO_CONFIG);
+    mpuLogger.debug("GYRO_CONFIG after: 0x%02X (expected: 0x%02X)", verifyValue, gyroConfigValue);
+    if (verifyValue != gyroConfigValue) {
+      mpuLogger.error("Gyro range write failed!");
+    }
+  #endif
 }
 
 void HMS_MPU6050::setFsyncSampleOutput(HMS_MPU6050_FsyncOut fsyncOut) {
   uint8_t configValue = readRegister(HMS_MPU6050_CONFIG);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("CONFIG before: 0x%02X", configValue);
+  #endif
+  
   configValue = (configValue & 0x1F) | ((fsyncOut & 0x07) << 3);                            // Clear bits 3-5, set new fsync output
   writeRegister(HMS_MPU6050_CONFIG, configValue);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_CONFIG);
+    mpuLogger.debug("CONFIG after: 0x%02X (expected: 0x%02X)", verifyValue, configValue);
+    if (verifyValue != configValue) {
+      mpuLogger.error("FSYNC sample output write failed!");
+    }
+  #endif
 }
 
 void HMS_MPU6050::setAccelerometerRange(HMS_MPU6050_AccelRange range) {
   uint8_t accelConfigValue = readRegister(HMS_MPU6050_ACCEL_CONFIG);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("ACCEL_CONFIG before: 0x%02X", accelConfigValue);
+  #endif
+  
   accelConfigValue = (accelConfigValue & 0xE7) | ((range & 0x03) << 3);                     // Clear bits 3-4, set new range
   writeRegister(HMS_MPU6050_ACCEL_CONFIG, accelConfigValue);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_ACCEL_CONFIG);
+    mpuLogger.debug("ACCEL_CONFIG after: 0x%02X (expected: 0x%02X)", verifyValue, accelConfigValue);
+    if (verifyValue != accelConfigValue) {
+      mpuLogger.error("Accelerometer range write failed!");
+    }
+  #endif
 }
 
 void HMS_MPU6050::setHighPassFilter(HMS_MPU6050_HighPassFilter filter) {
   uint8_t accelConfigValue = readRegister(HMS_MPU6050_ACCEL_CONFIG);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("ACCEL_CONFIG before: 0x%02X", accelConfigValue);
+  #endif
+  
   accelConfigValue = (accelConfigValue & 0xF8) | (filter & 0x07);                           // Clear bits 0-2, set new filter
   writeRegister(HMS_MPU6050_ACCEL_CONFIG, accelConfigValue);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_ACCEL_CONFIG);
+    mpuLogger.debug("ACCEL_CONFIG after: 0x%02X (expected: 0x%02X)", verifyValue, accelConfigValue);
+    if (verifyValue != accelConfigValue) {
+      mpuLogger.error("High pass filter write failed!");
+    }
+  #endif
 }
 
 void HMS_MPU6050::setMotionInterrupt(bool active) {
   uint8_t intEnableValue = readRegister(HMS_MPU6050_INT_ENABLE);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("INT_ENABLE before: 0x%02X", intEnableValue);
+  #endif
+  
   if (active) {
     intEnableValue |= 0x40;                                                                 // Set bit 6
   } else {
     intEnableValue &= 0xBF;                                                                 // Clear bit 6 (0xBF = 0b10111111)
   }
   writeRegister(HMS_MPU6050_INT_ENABLE, intEnableValue);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_INT_ENABLE);
+    mpuLogger.debug("INT_ENABLE after: 0x%02X (expected: 0x%02X)", verifyValue, intEnableValue);
+    if (verifyValue != intEnableValue) {
+      mpuLogger.error("Motion interrupt write failed!");
+    }
+  #endif
 }
 
 void HMS_MPU6050::setMotionDetectionDuration(uint8_t duration) {
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t beforeValue = readRegister(HMS_MPU6050_MOT_DUR);
+    mpuLogger.debug("MOT_DUR before: 0x%02X", beforeValue);
+  #endif
+  
   writeRegister(HMS_MPU6050_MOT_DUR, duration);
+  
+  // Verify the write
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_MOT_DUR);
+    mpuLogger.debug("MOT_DUR after: 0x%02X (expected: 0x%02X)", verifyValue, duration);
+    if (verifyValue != duration) {
+      mpuLogger.error("Motion detection duration write failed!");
+    }
+  #endif
 }
 
 void HMS_MPU6050::setMotionDetectionThreshold(uint8_t threshold) {
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t beforeValue = readRegister(HMS_MPU6050_MOT_THR);
+    mpuLogger.debug("MOT_THR before: 0x%02X", beforeValue);
+  #endif
+  
   writeRegister(HMS_MPU6050_MOT_THR, threshold);
+  
+  // Verify the write
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_MOT_THR);
+    mpuLogger.debug("MOT_THR after: 0x%02X (expected: 0x%02X)", verifyValue, threshold);
+    if (verifyValue != threshold) {
+      mpuLogger.error("Motion detection threshold write failed!");
+    }
+  #endif
 }
 
 bool HMS_MPU6050::getMotionInterruptStatus() {
@@ -206,8 +390,21 @@ void HMS_MPU6050::setI2CBypass(bool bypass) {
 
 void HMS_MPU6050::setClock(HMS_MPU6050_ClockSelect clock) {
   uint8_t pwrMgmtValue = readRegister(HMS_MPU6050_PWR_MGMT_1);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("PWR_MGMT_1 before: 0x%02X", pwrMgmtValue);
+  #endif
+  
   pwrMgmtValue = (pwrMgmtValue & 0xF8) | (clock & 0x07);                                   // Clear bits 0-2, set new clock
   writeRegister(HMS_MPU6050_PWR_MGMT_1, pwrMgmtValue);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_PWR_MGMT_1);
+    mpuLogger.debug("PWR_MGMT_1 after: 0x%02X (expected: 0x%02X)", verifyValue, pwrMgmtValue);
+    if (verifyValue != pwrMgmtValue) {
+      mpuLogger.error("Clock select write failed!");
+    }
+  #endif
 }
 
 HMS_MPU6050_ClockSelect HMS_MPU6050::getClock() {
@@ -217,50 +414,125 @@ HMS_MPU6050_ClockSelect HMS_MPU6050::getClock() {
 
 bool HMS_MPU6050::enableSleep(bool enable) {
   uint8_t pwrMgmtValue = readRegister(HMS_MPU6050_PWR_MGMT_1);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("PWR_MGMT_1 before: 0x%02X", pwrMgmtValue);
+  #endif
+  
   if (enable) {
     pwrMgmtValue |= 0x40;                                                                   // Set bit 6
   } else {
     pwrMgmtValue &= 0xBF;                                                                   // Clear bit 6 (0xBF = 0b10111111)
   }
   writeRegister(HMS_MPU6050_PWR_MGMT_1, pwrMgmtValue);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_PWR_MGMT_1);
+    mpuLogger.debug("PWR_MGMT_1 after: 0x%02X (expected: 0x%02X)", verifyValue, pwrMgmtValue);
+    if (verifyValue != pwrMgmtValue) {
+      mpuLogger.error("Sleep enable write failed!");
+      return false;
+    }
+  #endif
+  
   return true;
 }
 
 bool HMS_MPU6050::enableCycle(bool enable) {
   uint8_t pwrMgmtValue = readRegister(HMS_MPU6050_PWR_MGMT_1);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("PWR_MGMT_1 before: 0x%02X", pwrMgmtValue);
+  #endif
+  
   if (enable) {
     pwrMgmtValue |= 0x20;                                                                   // Set bit 5
   } else {
     pwrMgmtValue &= 0xDF;                                                                   // Clear bit 5 (0xDF = 0b11011111)
   }
   writeRegister(HMS_MPU6050_PWR_MGMT_1, pwrMgmtValue);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_PWR_MGMT_1);
+    mpuLogger.debug("PWR_MGMT_1 after: 0x%02X (expected: 0x%02X)", verifyValue, pwrMgmtValue);
+    if (verifyValue != pwrMgmtValue) {
+      mpuLogger.error("Cycle enable write failed!");
+      return false;
+    }
+  #endif
+  
   return true;
 }
 
 bool HMS_MPU6050::setTemperatureStandby(bool enable) {
   uint8_t pwrMgmtValue = readRegister(HMS_MPU6050_PWR_MGMT_1);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("PWR_MGMT_1 before: 0x%02X", pwrMgmtValue);
+  #endif
+  
   if (enable) {
     pwrMgmtValue |= 0x08;                                                                   // Set bit 3
   } else {
     pwrMgmtValue &= 0xF7;                                                                   // Clear bit 3 (0xF7 = 0b11110111)
   }
   writeRegister(HMS_MPU6050_PWR_MGMT_1, pwrMgmtValue);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_PWR_MGMT_1);
+    mpuLogger.debug("PWR_MGMT_1 after: 0x%02X (expected: 0x%02X)", verifyValue, pwrMgmtValue);
+    if (verifyValue != pwrMgmtValue) {
+      mpuLogger.error("Temperature standby write failed!");
+      return false;
+    }
+  #endif
+  
   return true;
 }
 
 bool HMS_MPU6050::setGyroStandby(bool xAxisStandby, bool yAxisStandby, bool zAxisStandby) {
   uint8_t pwrMgmt2Value = readRegister(HMS_MPU6050_PWR_MGMT_2);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("PWR_MGMT_2 before: 0x%02X", pwrMgmt2Value);
+  #endif
+  
   uint8_t gyroStandbyBits = (xAxisStandby << 2) | (yAxisStandby << 1) | zAxisStandby;      // Bits 2, 1, 0
   pwrMgmt2Value = (pwrMgmt2Value & 0xF8) | (gyroStandbyBits & 0x07);                       // Clear bits 0-2, set new values
   writeRegister(HMS_MPU6050_PWR_MGMT_2, pwrMgmt2Value);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_PWR_MGMT_2);
+    mpuLogger.debug("PWR_MGMT_2 after: 0x%02X (expected: 0x%02X)", verifyValue, pwrMgmt2Value);
+    if (verifyValue != pwrMgmt2Value) {
+      mpuLogger.error("Gyro standby write failed!");
+      return false;
+    }
+  #endif
+  
   return true;
 }
 
 bool HMS_MPU6050::setAccelerometerStandby(bool xAxisStandby, bool yAxisStandby, bool zAxisStandby) {
   uint8_t pwrMgmt2Value = readRegister(HMS_MPU6050_PWR_MGMT_2);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.debug("PWR_MGMT_2 before: 0x%02X", pwrMgmt2Value);
+  #endif
+  
   uint8_t accelStandbyBits = (xAxisStandby << 2) | (yAxisStandby << 1) | zAxisStandby;     // Bits 5, 4, 3
   pwrMgmt2Value = (pwrMgmt2Value & 0xC7) | ((accelStandbyBits & 0x07) << 3);               // Clear bits 3-5, set new values
   writeRegister(HMS_MPU6050_PWR_MGMT_2, pwrMgmt2Value);
+  
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    uint8_t verifyValue = readRegister(HMS_MPU6050_PWR_MGMT_2);
+    mpuLogger.debug("PWR_MGMT_2 after: 0x%02X (expected: 0x%02X)", verifyValue, pwrMgmt2Value);
+    if (verifyValue != pwrMgmt2Value) {
+      mpuLogger.error("Accelerometer standby write failed!");
+      return false;
+    }
+  #endif
+  
   return true;
 }
 
@@ -325,26 +597,38 @@ void HMS_MPU6050::readSensorData() {
 }
 
 HMS_MPU6050_StatusTypeDef HMS_MPU6050::init() {
-    if(readRegister(HMS_MPU6050_WHO_AM_I) != HMS_MPU6050_DEVICE_ID) {
-        #ifdef HMS_MPU6050_LOGGER_ENABLED
-            mpuLogger.error(
-                "Device ID mismatch. Expected 0x%02X, got 0x%02X", 
-                HMS_MPU6050_DEVICE_ID, readRegister(HMS_MPU6050_WHO_AM_I)
-            );
-        #endif
-        return HMS_MPU6050_ERROR;                                                           // Device ID mismatch
-    }
+  // First, wake up the device by clearing the sleep bit
+  writeRegister(HMS_MPU6050_PWR_MGMT_1, 0x00);                                            // Clear sleep bit (bit 6), use internal oscillator
+  mpuDelay(100);                                                                          // Wait for device to wake up
 
-    reset();
-    setSampleRateDivisor(4);                                                                // Set sample rate to 200Hz (
-    setFilterBandwidth(HMS_MPU6050_BAND_21_HZ);                                             // Set DLPF to 21Hz
-    setGyroRange(HMS_MPU6050_RANGE_250_DEG);                                                // Set gyro range to +/- 250 deg/s
-    setAccelerometerRange(HMS_MPU6050_RANGE_2_G);                                           // Set accelerometer range to +/- 2g
+  if(readRegister(HMS_MPU6050_WHO_AM_I) != HMS_MPU6050_DEVICE_ID) {
+    #ifdef HMS_MPU6050_LOGGER_ENABLED
+      mpuLogger.error(
+        "Device ID mismatch. Expected 0x%02X, got 0x%02X", 
+        HMS_MPU6050_DEVICE_ID, readRegister(HMS_MPU6050_WHO_AM_I)
+      );
+    #endif
+    return HMS_MPU6050_ERROR;                                                             // Device ID mismatch
+  }
 
-    writeRegister(HMS_MPU6050_PWR_MGMT_1, 0x01);                                            // Set clock config to PLL with Gyro X reference
-    mpuDelay(100);
+  reset();
+  
+  // Wake up again after reset since reset puts device back to sleep
+  writeRegister(HMS_MPU6050_PWR_MGMT_1, 0x00);                                            // Clear sleep bit again
+  mpuDelay(100);
+  
+  setSampleRateDivisor(4);                                                                // Set sample rate to 200Hz (
+  setFilterBandwidth(HMS_MPU6050_BAND_21_HZ);                                             // Set DLPF to 21Hz
+  setGyroRange(HMS_MPU6050_RANGE_250_DEG);                                                // Set gyro range to +/- 250 deg/s
+  setAccelerometerRange(HMS_MPU6050_RANGE_2_G);                                           // Set accelerometer range to +/- 2g
 
-    return HMS_MPU6050_OK;
+  writeRegister(HMS_MPU6050_PWR_MGMT_1, 0x01);                                            // Set clock config to PLL with Gyro X reference
+  mpuDelay(100);
+
+  #ifdef HMS_MPU6050_LOGGER_ENABLED
+    mpuLogger.info("MPU6050 initialization completed successfully");
+  #endif
+  return HMS_MPU6050_OK;
 }
 
 uint8_t HMS_MPU6050::getSampleRateDivisor() {
