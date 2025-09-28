@@ -44,10 +44,7 @@
   #define HMS_MPU6050_PLATFORM_ESP_IDF
 #elif defined(__ZEPHYR__)
   #define HMS_MPU6050_PLATFORM_ZEPHYR
-#elif defined(STM32F0) || defined(STM32F1) || defined(STM32F3) || defined(STM32F4) || \
-      defined(STM32F7) || defined(STM32G0) || defined(STM32G4) || defined(STM32H7) || \
-      defined(STM32L0) || defined(STM32L1) || defined(STM32L4) || defined(STM32L5) || \
-      defined(STM32WB) || defined(STM32WL)
+#elif defined( __STM32__)
   #define HMS_MPU6050_PLATFORM_STM32_HAL
 #endif
 
@@ -60,6 +57,8 @@
   #include <zephyr/device.h>
   #include <zephyr/drivers/i2c.h>
 #elif defined(HMS_MPU6050_PLATFORM_STM32_HAL)
+  #include "main.h"
+  #include <stdio.h>
 #endif
 
 #endif // HMS_MPU6050_DRIVER_H
@@ -200,8 +199,6 @@ public:
   void getSensorData(HMS_MPU6050_SensorData* sensor);
   void getAcceleration(HMS_MPU6050_Acceleration* accel);
 
-
-  uint8_t readRegister(uint8_t reg);
   void setI2CBypass(bool bypass);
   void setMotionInterrupt(bool active);
   void setInterruptPinLatch(bool held);
@@ -230,13 +227,13 @@ private:
   float     gyroZ;
   float     temperature;
   uint8_t   deviceAddress;
-  uint16_t  rawTemp;
-  uint16_t  rawAccX;
-  uint16_t  rawAccY;
-  uint16_t  rawAccZ;
-  uint16_t  rawGyroX;
-  uint16_t  rawGyroY;
-  uint16_t  rawGyroZ;
+  int16_t   rawTemp;
+  int16_t   rawAccX;
+  int16_t   rawAccY;
+  int16_t   rawAccZ;
+  int16_t   rawGyroX;
+  int16_t   rawGyroY;
+  int16_t   rawGyroZ;
 
   #if defined(HMS_MPU6050_PLATFORM_ARDUINO)
     TwoWire *mpu6050_wire = NULL;
@@ -253,6 +250,6 @@ private:
   void readSensorData();
   void mpuDelay(uint32_t ms);
   HMS_MPU6050_StatusTypeDef init();
-  
+  uint8_t readRegister(uint8_t reg);
   void writeRegister(uint8_t reg, uint8_t val); 
 };

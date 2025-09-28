@@ -112,10 +112,63 @@ void HMS_MPU6050::writeRegister(uint8_t registerAddr, uint8_t value) {
 
 #elif defined(HMS_MPU6050_PLATFORM_STM32_HAL)
 HMS_MPU6050_StatusTypeDef HMS_MPU6050::begin(I2C_HandleTypeDef *hi2c, uint8_t addr) {
-    // STM32 HAL-specific initialization code here
-    return HMS_MPU6050_OK;
+    if (hi2c == NULL) {
+        #ifdef HMS_MPU6050_LOGGER_ENABLED
+            mpuLogger.error("I2C handle is NULL");
+        #endif
+        return HMS_MPU6050_ERROR;
+    }
+
+    mpu6050_hi2c = hi2c;
+    deviceAddress = addr << 1; // STM32 HAL uses 8-bit address (left-shifted by 1)
+
+    HAL_StatusTypeDef result;
+    result = HAL_I2C_IsDeviceReady(mpu6050_hi2c, deviceAddress, 3, 100);
+
+    if (result != HAL_OK) {
+        #ifdef HMS_MPU6050_LOGGER_ENABLED
+            mpuLogger.error("Device not found at address 0x%02X", deviceAddress);
+        #endif
+        return HMS_MPU6050_NOT_FOUND;
+    }
+    #ifdef HMS_MPU6050_LOGGER_ENABLED
+        mpuLogger.info("Device found at address 0x%02X", deviceAddress);
+    #endif
+
+    return init();
 }
 
+uint8_t HMS_MPU6050::readRegister(uint8_t registerAddr) {
+  uint8_t value = 0;
+
+  #if defined(HMS_MPU6050_LOGGER_ENABLED)
+    HAL_StatusTypeDef result;
+    result = HAL_I2C_Mem_Read(mpu6050_hi2c, deviceAddress, registerAddr, I2C_MEMADD_SIZE_8BIT, &value, 1, 100);
+    if (result != HAL_OK) {
+      mpuLogger.error("Failed to read register 0x%02X", registerAddr);
+    } else {
+      mpuLogger.debug("Read register 0x%02X: 0x%02X", registerAddr, value);
+    }
+  #else
+    HAL_I2C_Mem_Read(mpu6050_hi2c, deviceAddress, registerAddr, I2C_MEMADD_SIZE_8BIT, &value, 1, 100);
+  #endif
+
+  return value;
+}
+
+void HMS_MPU6050::writeRegister(uint8_t registerAddr, uint8_t value) {
+  #if defined(HMS_MPU6050_LOGGER_ENABLED)
+    HAL_StatusTypeDef result;
+    result = HAL_I2C_Mem_Write(mpu6050_hi2c, deviceAddress, registerAddr, I2C_MEMADD_SIZE_8BIT, &value, 1, 100);
+    if (result != HAL_OK) {
+      mpuLogger.error("Failed to write register 0x%02X", registerAddr);
+    } else {
+      mpuLogger.debug("Wrote register 0x%02X: 0x%02X", registerAddr, value);
+    }
+  #else
+    HAL_I2C_Mem_Write(mpu6050_hi2c, deviceAddress, registerAddr, I2C_MEMADD_SIZE_8BIT, &value, 1, 100);
+  #endif
+}
 #endif
 
 void HMS_MPU6050::mpuDelay(uint32_t ms) {
@@ -537,67 +590,48 @@ bool HMS_MPU6050::setAccelerometerStandby(bool xAxisStandby, bool yAxisStandby, 
 }
 
 void HMS_MPU6050::readSensorData() {
-  // Read all sensor data starting from ACCEL_OUT register (14 bytes total)
-  uint8_t buffer[14];
+  uint8_t buffer[14];                                                                      // Read all sensor data starting from ACCEL_OUT register (14 bytes total)
   
-  // Read 14 consecutive bytes starting from HMS_MPU6050_ACCEL_OUT
-  for (int i = 0; i < 14; i++) {
+  for (int i = 0; i < 14; i++) {                                                           // Read 14 consecutive bytes starting from HMS_MPU6050_ACCEL_OUT
     buffer[i] = readRegister(HMS_MPU6050_ACCEL_OUT + i);
   }
 
-  // Parse accelerometer data (bytes 0-5)
-  rawAccX = (buffer[0] << 8) | buffer[1];
-  rawAccY = (buffer[2] << 8) | buffer[3];
-  rawAccZ = (buffer[4] << 8) | buffer[5];
+  rawAccX = (int16_t)((buffer[0] << 8) | buffer[1]);                                       // Parse accelerometer data (bytes 0-5) - cast to signed int16_t
+  rawAccY = (int16_t)((buffer[2] << 8) | buffer[3]);
+  rawAccZ = (int16_t)((buffer[4] << 8) | buffer[5]);
 
-  // Parse temperature data (bytes 6-7)
-  rawTemp = (buffer[6] << 8) | buffer[7];
+  rawTemp = (int16_t)((buffer[6] << 8) | buffer[7]);                                      // Parse temperature data (bytes 6-7) - cast to signed int16_t
 
-  // Parse gyroscope data (bytes 8-13)
-  rawGyroX = (buffer[8] << 8) | buffer[9];
-  rawGyroY = (buffer[10] << 8) | buffer[11];
-  rawGyroZ = (buffer[12] << 8) | buffer[13];
+  rawGyroX = (int16_t)((buffer[8] << 8) | buffer[9]);                                     // Parse gyroscope data (bytes 8-13) - cast to signed int16_t
+  rawGyroY = (int16_t)((buffer[10] << 8) | buffer[11]);
+  rawGyroZ = (int16_t)((buffer[12] << 8) | buffer[13]);
 
-  // Convert temperature: (rawTemp / 340.0) + 36.53
-  temperature = (rawTemp / 340.0f) + 36.53f;
+  temperature = (rawTemp / 340.0f) + 36.53f;                                              // Convert temperature: (rawTemp / 340.0) + 36.53
 
-  // Get accelerometer range and calculate scale
-  HMS_MPU6050_AccelRange accel_range = getAccelerometerRange();
-  float accel_scale = 1;
-  if (accel_range == HMS_MPU6050_RANGE_16_G)
-    accel_scale = 2048;
-  else if (accel_range == HMS_MPU6050_RANGE_8_G)
-    accel_scale = 4096;
-  else if (accel_range == HMS_MPU6050_RANGE_4_G)
-    accel_scale = 8192;
-  else if (accel_range == HMS_MPU6050_RANGE_2_G)
-    accel_scale = 16384;
+  HMS_MPU6050_AccelRange accel_range = getAccelerometerRange();                           // Get accelerometer range and calculate scale (LSB/g from datasheet)
+  float accel_scale = 16384.0f;                                                           // Default for ±2g
+  if (accel_range == HMS_MPU6050_RANGE_2_G)         accel_scale = 16384.0f;               // ±2g: 16384 LSB/g
+  else if (accel_range == HMS_MPU6050_RANGE_4_G)   accel_scale = 8192.0f;                 // ±4g: 8192 LSB/g
+  else if (accel_range == HMS_MPU6050_RANGE_8_G)   accel_scale = 4096.0f;                 // ±8g: 4096 LSB/g
+  else if (accel_range == HMS_MPU6050_RANGE_16_G)  accel_scale = 2048.0f;                 // ±16g: 2048 LSB/g
 
-  // Convert raw accelerometer data to g units
-  accX = ((float)rawAccX) / accel_scale;
-  accY = ((float)rawAccY) / accel_scale;
-  accZ = ((float)rawAccZ) / accel_scale;
+  accX = rawAccX / accel_scale;                                                           // Convert raw accelerometer data to g units (no casting needed, already signed)
+  accY = rawAccY / accel_scale;
+  accZ = rawAccZ / accel_scale;
 
-  // Get gyroscope range and calculate scale
-  HMS_MPU6050_GyroRange gyro_range = getGyroRange();
-  float gyro_scale = 1;
-  if (gyro_range == HMS_MPU6050_RANGE_250_DEG)
-    gyro_scale = 131;
-  else if (gyro_range == HMS_MPU6050_RANGE_500_DEG)
-    gyro_scale = 65.5f;
-  else if (gyro_range == HMS_MPU6050_RANGE_1000_DEG)
-    gyro_scale = 32.8f;
-  else if (gyro_range == HMS_MPU6050_RANGE_2000_DEG)
-    gyro_scale = 16.4f;
+  HMS_MPU6050_GyroRange gyro_range = getGyroRange();                                      // Get gyroscope range and calculate scale (LSB/(°/s) from datasheet)
+  float gyro_scale = 131.0f;                                                              // Default for ±250°/s
+  if (gyro_range == HMS_MPU6050_RANGE_250_DEG)        gyro_scale = 131.0f;                // ±250°/s: 131 LSB/(°/s)
+  else if (gyro_range == HMS_MPU6050_RANGE_500_DEG)   gyro_scale = 65.5f;                 // ±500°/s: 65.5 LSB/(°/s)
+  else if (gyro_range == HMS_MPU6050_RANGE_1000_DEG)  gyro_scale = 32.8f;                 // ±1000°/s: 32.8 LSB/(°/s)
+  else if (gyro_range == HMS_MPU6050_RANGE_2000_DEG)  gyro_scale = 16.4f;                 // ±2000°/s: 16.4 LSB/(°/s)
 
-  // Convert raw gyroscope data to degrees/second
-  gyroX = ((float)rawGyroX) / gyro_scale;
-  gyroY = ((float)rawGyroY) / gyro_scale;
-  gyroZ = ((float)rawGyroZ) / gyro_scale;
+  gyroX = rawGyroX / gyro_scale;                                                          // Convert raw gyroscope data to degrees/second (no casting needed, already signed)
+  gyroY = rawGyroY / gyro_scale;
+  gyroZ = rawGyroZ / gyro_scale;
 }
 
 HMS_MPU6050_StatusTypeDef HMS_MPU6050::init() {
-  // First, wake up the device by clearing the sleep bit
   writeRegister(HMS_MPU6050_PWR_MGMT_1, 0x00);                                            // Clear sleep bit (bit 6), use internal oscillator
   mpuDelay(100);                                                                          // Wait for device to wake up
 
@@ -613,7 +647,6 @@ HMS_MPU6050_StatusTypeDef HMS_MPU6050::init() {
 
   reset();
   
-  // Wake up again after reset since reset puts device back to sleep
   writeRegister(HMS_MPU6050_PWR_MGMT_1, 0x00);                                            // Clear sleep bit again
   mpuDelay(100);
   
